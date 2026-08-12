@@ -1,0 +1,16 @@
+{
+  "id": "DeltaEpsilon.Displacement",
+  "name": "Reaction Displacement",
+  "description": "Reactions will try to displace pixels to make space for products that would not fit.",
+  "author": "DeltaEpsilon",
+  "version": "1.0.0",
+  "dllModules": [
+    {
+      "moduleId": "DeltaEpsilon.Displacement",
+      "dll": "AtomCraft-Displacement.dll",
+      "initClass": "AtomCraft_Displacement.Entry",
+      "dependencies": [ "0Harmony/Wrapper" ],
+      "optionalDependencies": [ ]
+    }
+  ]
+}

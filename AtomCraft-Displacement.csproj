@@ -1,0 +1,26 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net8.0</TargetFramework>
+        <RootNamespace>AtomCraft_Displacement</RootNamespace>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <Reference Include="0Harmony">
+        <HintPath>dev\0Harmony.dll</HintPath>
+      </Reference>
+      <Reference Include="Atomcraft">
+        <HintPath>dev\Atomcraft.dll</HintPath>
+      </Reference>
+      <Reference Include="GodotSharp">
+        <HintPath>dev\GodotSharp.dll</HintPath>
+      </Reference>
+    </ItemGroup>
+
+    <Target Name="PostBuild" AfterTargets="PostBuildEvent">
+      <Exec Command="cp ./bin/Release/net8.0/AtomCraft-Displacement.dll .&#xA;zip AtomCraft-Displacement.zip AtomCraft-Displacement.dll mod.json" />
+    </Target>
+
+</Project>

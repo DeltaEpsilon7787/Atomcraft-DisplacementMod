@@ -1,0 +1,9 @@
+bin/
+dev/
+obj/
+.idea/
+AtomCraft-Displacement.zip
+AtomCraft-Displacement.dll
+/packages/
+riderModule.iml
+/_ReSharper.Caches/
