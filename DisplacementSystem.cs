@@ -438,6 +438,12 @@ public static class DisplacementSystem
             }
         }
 
+        while (inputSlotsHead > 0)
+        {
+            var (x, y) = inputSlots[--inputSlotsHead].ShiftFrom(cx, cy);
+            field.Set(x, y, -1);
+        }
+
         var cIndx = field.Index(cx, cy);
         var tempHere = field.GetHeatmap(cIndx);
 
