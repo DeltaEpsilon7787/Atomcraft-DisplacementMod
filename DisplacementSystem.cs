@@ -11,80 +11,132 @@ namespace DeltaEpsilon.Displacement;
 
 public static class DisplacementSystem
 {
-    static readonly ConcurrentBag<(int, int, Reaction)> ReactionOpportunities = [];
+    static readonly ConcurrentBag<(int, int)> ReactionOpportunities = [];
     const uint MaxDisplacementLength = 256;
 
-    static readonly Dictionary<(int, int), (int, int)> LeftRemapping = new(8)
-    {
-        { (-1, -1), (-1, 0) },
-        { (-1, 0), (-1, 1) },
-        { (-1, 1), (0, 1) },
-        { (0, 1), (1, 1) },
-        { (1, 1), (1, 0) },
-        { (1, 0), (1, -1) },
-        { (1, -1), (0, -1) },
-        { (0, -1), (-1, -1) }
-    };
+    // 0 1 2   ↖ ↑ ↗
+    // 3 4 5   ← X →
+    // 6 7 8   ↙ ↓ ↘
+    static (int, int) IndexToDirection(this byte indx) {
+        return indx switch
+        {
+            0 => (-1, -1),
+            1 => (+0, -1),
+            2 => (+1, -1),
+            3 => (-1, +0),
+            4 => (+0, +0),
+            5 => (+1, +0),
+            6 => (-1, +1),
+            7 => (+0, +1),
+            8 => (+1, +1),
+            _ => (+0, +0),
+        };
+    }
 
-    static readonly Dictionary<(int, int), (int, int)> RightRemapping = new(8)
-    {
-        { (-1, -1), (0, -1) },
-        { (0, -1), (1, -1) },
-        { (1, -1), (1, 0) },
-        { (1, 0), (1, 1) },
-        { (1, 1), (0, 1) },
-        { (0, 1), (-1, 1) },
-        { (-1, 1), (-1, 0) },
-        { (-1, 0), (-1, -1) },
-    };
+    static byte DirectionToIndex(this (int, int) dir) {
+        return dir switch
+        {
+            (-1, -1) => 0,
+            (+0, -1) => 1,
+            (+1, -1) => 2,
+            (-1, +0) => 3,
+            (+0, +0) => 4,
+            (+1, +0) => 5,
+            (-1, +1) => 6,
+            (+0, +1) => 7,
+            (+1, +1) => 8,
+            _ => 4,
+        };
+    }
+
+    static (int, int) ShiftFrom(this byte dir, int x, int y) {
+        var (dx, dy) = dir.IndexToDirection();
+        return (x + dx, y + dy);
+    }
+
+    static short GetAt(this (int, int) coords, SimField field) {
+        return field.Get(coords.Item1, coords.Item2);
+    }
+
+    static short Get(this SimField field, (int, int) coords) {
+        return field.Get(coords.Item1, coords.Item2);
+    }
+
+    static byte DirectionLeftRotate(this byte dirIndx) {
+        return dirIndx switch
+        {
+            0 => 3,
+            1 => 0,
+            2 => 1,
+            3 => 6,
+            4 => 4,
+            5 => 2,
+            6 => 7,
+            7 => 8,
+            8 => 5,
+            _ => dirIndx,
+        };
+    }
+
+    static byte DirectionRightRotate(this byte dirIndx) {
+        return dirIndx switch
+        {
+            0 => 1,
+            1 => 2,
+            2 => 5,
+            3 => 0,
+            4 => 4,
+            5 => 8,
+            6 => 3,
+            7 => 6,
+            8 => 7,
+            _ => dirIndx,
+        };
+    }
 
     [ThreadStatic] static byte[]? _pixelCounter;
 
-    public static void RecordReactionOpportunity(int x, int y, Reaction reaction) {
-        ReactionOpportunities.Add((x, y, reaction));
+    public static void RecordReactionOpportunity(int x, int y) {
+        ReactionOpportunities.Add((x, y));
     }
 
-    public static Reaction? TryFindReaction(BaseMaterial mat, int cx, int cy, SimField field, int tick) {
-        if (mat.Reactions == null || mat.Reactions.Length == 0)
+    public static Reaction? TryFindReaction(BaseMaterial that, int cx, int cy, SimField field, int tick) {
+        if (that.Reactions == null || that.Reactions.Length == 0)
         {
             return null;
         }
 
         _pixelCounter ??= new byte[short.MaxValue + 1];
 
-        var m0 = field.Get(cx - 1, cy - 1);
-        var m1 = field.Get(cx - 1, cy + 0);
-        var m2 = field.Get(cx - 1, cy + 1);
-        var m3 = field.Get(cx + 0, cy - 1);
-        var m4 = field.Get(cx + 0, cy + 0);
-        var m5 = field.Get(cx + 0, cy + 1);
-        var m6 = field.Get(cx + 1, cy - 1);
-        var m7 = field.Get(cx + 1, cy + 0);
-        var m8 = field.Get(cx + 1, cy + 1);
-
-        var is1 = Materials.IsStatic(m1);
-        var is3 = Materials.IsStatic(m3);
-        var is5 = Materials.IsStatic(m5);
-        var is7 = Materials.IsStatic(m7);
-
-        if (is1 && is3) m0 = -2;
-        if (is1 && is5) m2 = -2;
-        if (is3 && is7) m6 = -2;
-        if (is5 && is7) m8 = -2;
-
-        Span<short> matArray = [m0, m1, m2, m3, m4, m5, m6, m7, m8];
-
-        for (var i = 0; i < 9; i++)
+        // 0 1 2   ↖ ↑ ↗
+        // 3 4 5   ← X →
+        // 6 7 8   ↙ ↓ ↘
+        Span<short> matArray = stackalloc short[9];
+        for (byte dir = 0; dir < 9; dir++)
         {
-            var m = matArray[i];
-            if (m >= 0) _pixelCounter[m]++;
+            matArray[dir] = dir.ShiftFrom(cx, cy).GetAt(field);
+        }
+
+        var is1 = Materials.IsStatic(matArray[1]);
+        var is3 = Materials.IsStatic(matArray[3]);
+        var is5 = Materials.IsStatic(matArray[5]);
+        var is7 = Materials.IsStatic(matArray[7]);
+
+        if (is1 && is3) matArray[0] = -2;
+        if (is1 && is5) matArray[2] = -2;
+        if (is3 && is7) matArray[6] = -2;
+        if (is5 && is7) matArray[8] = -2;
+
+        foreach (var mat in matArray)
+        {
+            if (mat >= 0) _pixelCounter[mat]++;
         }
 
         var tempHere = field.GetHeatmap(cx, cy);
         var rng = RNG.Roll(cx, cy, tick);
 
         Reaction? result = null;
-        foreach (Reaction reaction in mat.Reactions)
+        foreach (Reaction reaction in that.Reactions)
         {
             if (reaction.Blender ||
                 reaction.Temperature.HasValue && tempHere < reaction.Temperature ||
@@ -109,13 +161,9 @@ public static class DisplacementSystem
             break;
         }
 
-        for (var i = 0; i < 9; i++)
+        foreach (var mat in matArray)
         {
-            var m = matArray[i];
-            if (m >= 0)
-            {
-                _pixelCounter[m] = 0;
-            }
+            if (mat >= 0) _pixelCounter[mat] = 0;
         }
 
         return result;
@@ -123,163 +171,193 @@ public static class DisplacementSystem
 
     static List<(int, int)[]>? TryFindDisplacements(
         int x, int y,
-        Span<(int, int)> displacementPositions,
+        Span<byte> displacementStarts,
         SimField field, int tick
     ) {
-        List<(int, int)[]> paths = new(displacementPositions.Length);
+        List<(int, int)[]> paths = new(displacementStarts.Length);
 
-        foreach (var (fx, fy) in displacementPositions)
+        Span<(int, int)> path = stackalloc (int, int)[(int)MaxDisplacementLength];
+
+        foreach (var dir in displacementStarts)
         {
-            var (dx, dy) = (fx - x, fy - y);
-            var (cx, cy) = (fx, fy);
+            var (fx, fy) = dir.ShiftFrom(x, y);
 
-            Span<(int, int)> path = new (int, int)[MaxDisplacementLength];
-            path[0] = (cx, cy);
-            var pathHead = 1;
+            var (cx, cy) = (fx, fy);
+            var heading = dir;
+
+            var pathHead = 0;
+            path[pathHead++] = (cx, cy);
 
             var r = 4;
-            do
+
+            headingLoop:
+            var isDiagonalShift = heading switch
             {
-                (cx, cy) = (cx + dx, cy + dy);
-                path[pathHead++] = (cx, cy);
+                0 => true,
+                2 => true,
+                6 => true,
+                8 => true,
+                _ => false,
+            };
 
-                if (Math.Max(Math.Abs(cx - x), Math.Abs(cy - y)) <= 1)
+            if (isDiagonalShift)
+            {
+                if (heading switch
+                    {
+                        0 => Materials.IsStatic(((byte)(1)).ShiftFrom(cx, cy).GetAt(field)) &&
+                             Materials.IsStatic(((byte)(3)).ShiftFrom(cx, cy).GetAt(field)),
+                        2 => Materials.IsStatic(((byte)(1)).ShiftFrom(cx, cy).GetAt(field)) &&
+                             Materials.IsStatic(((byte)(5)).ShiftFrom(cx, cy).GetAt(field)),
+                        6 => Materials.IsStatic(((byte)(3)).ShiftFrom(cx, cy).GetAt(field)) &&
+                             Materials.IsStatic(((byte)(7)).ShiftFrom(cx, cy).GetAt(field)),
+                        8 => Materials.IsStatic(((byte)(5)).ShiftFrom(cx, cy).GetAt(field)) &&
+                             Materials.IsStatic(((byte)(7)).ShiftFrom(cx, cy).GetAt(field)),
+                        _ => false,
+                    })
                 {
-                    // Displacement failed, we've intersected with protected area.
+                    // Attempted to displace into a diagonally sealed location
                     return null;
                 }
+            }
 
-                var matId = field.Get(cx, cy);
-                if (Materials.IsStatic(matId))
+            (cx, cy) = heading.ShiftFrom(cx, cy);
+            if (Math.Max(Math.Abs(cx - x), Math.Abs(cy - y)) <= 1)
+            {
+                // Displacement failed, we've intersected with protected area.
+                return null;
+            }
+
+            var matId = field.Get(cx, cy);
+
+            // Hit a wall
+            if (Materials.IsStatic(matId)) return null;
+            if (matId == -2) return null;
+
+            path[pathHead++] = (cx, cy);
+            if (pathHead >= MaxDisplacementLength)
+            {
+                return null;
+            }
+
+            if (matId == -1)
+            {
+                paths.Add(path[..pathHead].ToArray());
+
+                if (paths.Count >= displacementStarts.Length)
                 {
-                    // Hit a wall
-                    return null;
+                    return paths;
                 }
 
-                switch (matId)
-                {
-                    case -1:
-                        // Successful displacement
-                        paths.Add(path[..pathHead].ToArray());
-                        goto onSuccess;
-                    case -2:
-                        // Reached OoB
-                        return null;
-                }
+                continue;
+            }
 
-                var doesDirShift = RNG.Roll(cx, cy, tick) % r == 0;
-                if (!doesDirShift) continue;
-
+            var doesDirShift = RNG.Roll(cx, cy, tick) % r == 0;
+            if (doesDirShift)
+            {
                 r++;
                 var choice = RNG.Roll(cx, cy, tick + 1) % 2;
-                (dx, dy) = choice == 0 ? LeftRemapping[(dx, dy)] : RightRemapping[(dx, dy)];
-            } while (pathHead < MaxDisplacementLength);
+                heading = choice == 0 ? heading.DirectionLeftRotate() : heading.DirectionRightRotate();
+            }
 
-            return null;
-
-            onSuccess: ;
+            goto headingLoop;
         }
 
         return paths;
     }
 
-    static void PerformReaction(int cx, int cy, SimField? field, int tick, Reaction reaction) {
+    static void InduceReactionAt(int cx, int cy, SimField? field, int tick) {
         if (field == null)
         {
             return;
         }
 
-        var primaryMat = field.Get(cx + 0, cy + 0);
-        Reaction? reactionTest = TryFindReaction(primaryMat.ToMaterial(), cx, cy, field, tick);
-        if (reactionTest != reaction)
+        var primaryMat = field.Get(cx, cy);
+        Reaction? reaction = TryFindReaction(primaryMat.ToMaterial(), cx, cy, field, tick);
+        if (reaction == null)
         {
-            // Revalidation of the reaction failed
+            // Displacement or something else changed the neighborhood, so reaction is no longer possible
             return;
         }
 
-        var m0 = field.Get(cx - 1, cy - 1);
-        var m1 = field.Get(cx - 1, cy + 0);
-        var m2 = field.Get(cx - 1, cy + 1);
-        var m3 = field.Get(cx + 0, cy - 1);
-        var m4 = field.Get(cx + 0, cy + 0);
-        var m5 = field.Get(cx + 0, cy + 1);
-        var m6 = field.Get(cx + 1, cy - 1);
-        var m7 = field.Get(cx + 1, cy + 0);
-        var m8 = field.Get(cx + 1, cy + 1);
+        // 0 1 2   ↖ ↑ ↗
+        // 3 4 5   ← X →
+        // 6 7 8   ↙ ↓ ↘
+        Span<short> matArray = stackalloc short[9];
+        for (byte dir = 0; dir < 9; dir++)
+        {
+            matArray[dir] = dir.ShiftFrom(cx, cy).GetAt(field);
+        }
 
-        var is1 = Materials.IsStatic(m1);
-        var is3 = Materials.IsStatic(m3);
-        var is5 = Materials.IsStatic(m5);
-        var is7 = Materials.IsStatic(m7);
+        var is1 = Materials.IsStatic(matArray[1]);
+        var is3 = Materials.IsStatic(matArray[3]);
+        var is5 = Materials.IsStatic(matArray[5]);
+        var is7 = Materials.IsStatic(matArray[7]);
 
-        if (is1 && is3) m0 = -2;
-        if (is1 && is5) m2 = -2;
-        if (is3 && is7) m6 = -2;
-        if (is5 && is7) m8 = -2;
+        if (is1 && is3) matArray[0] = -2;
+        if (is1 && is5) matArray[2] = -2;
+        if (is3 && is7) matArray[6] = -2;
+        if (is5 && is7) matArray[8] = -2;
 
-        Span<short> matIds = [m0, m1, m2, m3, m4, m5, m6, m7, m8];
-
-        Span<(short, int)> inputIdsAmts =
+        Span<(short type, int amt)> inputIdsAmts =
         [
             reaction.InputTypeCount > 0 ? (reaction.InputTypes[0], reaction.InputAmounts[0]) : ((short)0, 0),
             reaction.InputTypeCount > 1 ? (reaction.InputTypes[1], reaction.InputAmounts[1]) : ((short)0, 0),
             reaction.InputTypeCount > 2 ? (reaction.InputTypes[2], reaction.InputAmounts[2]) : ((short)0, 0),
             reaction.InputTypeCount > 3 ? (reaction.InputTypes[3], reaction.InputAmounts[3]) : ((short)0, 0),
         ];
-        Span<(short, int)> catalystIdsAmts =
+        Span<(short type, int amt)> catalystIdsAmts =
         [
             reaction.CatalystTypeCount > 0 ? (reaction.CatalystTypes[0], reaction.CatalystAmounts[0]) : ((short)0, 0),
             reaction.CatalystTypeCount > 1 ? (reaction.CatalystTypes[1], reaction.CatalystAmounts[1]) : ((short)0, 0),
         ];
 
-        Span<(int, int)> neighbors =
+        // Indx 4 has special meaning since it is the central pixel
+        //   so if always must be consumed first
+        Span<byte> directionOrdering =
         [
-            (cx - 1, cy - 1),
-            (cx - 1, cy + 0),
-            (cx - 1, cy + 1),
-            (cx + 0, cy - 1),
-            (cx + 0, cy + 0),
-            (cx + 0, cy + 1),
-            (cx + 1, cy - 1),
-            (cx + 1, cy + 0),
-            (cx + 1, cy + 1),
+            0, 1, 2,
+            3, 4, 5,
+            6, 7, 8,
         ];
 
-        // We exploit Shuffle's property that for same length vectors and tick, the reordering will be the same 
-        matIds.Shuffle(tick);
-        neighbors.Shuffle(tick);
+        (directionOrdering[0], directionOrdering[4]) = (directionOrdering[4], directionOrdering[0]);
+        (matArray[0], matArray[4]) = (matArray[4], matArray[0]);
 
-        Span<(int, int)> inputSlots = stackalloc (int, int)[9];
+        // We exploit Shuffle's property that for same length vectors and tick, the reordering will be the same 
+        matArray[1..].Shuffle(tick);
+        directionOrdering[1..].Shuffle(tick);
+
+        Span<byte> inputSlots = stackalloc byte[9];
         var inputSlotsHead = 0;
-        Span<(int, int)> airSlots = stackalloc (int, int)[9];
+        Span<byte> airSlots = stackalloc byte[9];
         var airSlotsHead = 0;
-        Span<(int, int)> displacementSlots = stackalloc (int, int)[9];
+        Span<byte> displacementSlots = stackalloc byte[9];
         var displacementSlotsHead = 0;
 
         for (var i = 0; i < 9; i++)
         {
-            var matId = matIds[i];
-            var (x, y) = neighbors[i];
+            var dir = directionOrdering[i];
+            var matId = matArray[i];
 
             switch (matId)
             {
                 case -1:
-                    airSlots[airSlotsHead++] = (x, y);
+                    airSlots[airSlotsHead++] = dir;
                     continue;
                 case >= 0:
                 {
                     for (var j = 0; j < 4; j++)
                     {
-                        if (matId != inputIdsAmts[j].Item1 || inputIdsAmts[j].Item2 <= 0) continue;
-                        inputIdsAmts[j].Item2--;
-                        inputSlots[inputSlotsHead++] = (x, y);
+                        if (matId != inputIdsAmts[j].type || inputIdsAmts[j].amt <= 0) continue;
+                        inputIdsAmts[j].amt--;
+                        inputSlots[inputSlotsHead++] = dir;
                         goto onFound;
                     }
 
                     for (var j = 0; j < 2; j++)
                     {
-                        if (matId != catalystIdsAmts[j].Item1 || catalystIdsAmts[j].Item2 <= 0) continue;
-                        catalystIdsAmts[j].Item2--;
+                        if (matId != catalystIdsAmts[j].type || catalystIdsAmts[j].amt <= 0) continue;
+                        catalystIdsAmts[j].amt--;
                         break;
                     }
 
@@ -288,7 +366,7 @@ public static class DisplacementSystem
                         continue;
                     }
 
-                    displacementSlots[displacementSlotsHead++] = (x, y);
+                    displacementSlots[displacementSlotsHead++] = dir;
                     break;
                 }
             }
@@ -305,24 +383,24 @@ public static class DisplacementSystem
         if (extraAirNeeded > 0)
         {
             // Not enough space to do the reaction, try to perform displacement
-            Span<(int, int)> displacementTargets = displacementSlots[..extraAirNeeded].ToArray();
-            List<(int, int)[]>? displacementPaths = null;
+            Span<byte> displacementStarts = displacementSlots[..extraAirNeeded].ToArray();
+            List<(int, int)[]>? paths = null;
             for (var i = 0; i < Math.Clamp(reaction.Probability, 1, 100); i++)
             {
-                displacementPaths = TryFindDisplacements(cx, cy, displacementTargets, field, tick);
-                if (displacementPaths != null)
+                paths = TryFindDisplacements(cx, cy, displacementStarts, field, tick);
+                if (paths != null)
                 {
                     break;
                 }
             }
 
-            if (displacementPaths == null)
+            if (paths == null)
             {
                 // Reaction could occur, but we could not make space for it
                 return;
             }
 
-            foreach ((int, int)[] path in displacementPaths)
+            foreach ((int, int)[] path in paths)
             {
                 for (var i = path.Length - 1; i >= 1; i--)
                 {
@@ -335,9 +413,9 @@ public static class DisplacementSystem
             }
 
             // Now, we have made space to drop stuff in
-            foreach (var (ax, ay) in displacementTargets)
+            foreach (var displacementIndx in displacementStarts)
             {
-                airSlots[airSlotsHead++] = (ax, ay);
+                airSlots[airSlotsHead++] = displacementIndx;
             }
         }
 
@@ -351,14 +429,11 @@ public static class DisplacementSystem
             var nextOutput = reaction.OutputsAsArray[i];
             if (inputSlotsHead > 0)
             {
-                var (x, y) = inputSlots[--inputSlotsHead];
+                var (x, y) = inputSlots[--inputSlotsHead].ShiftFrom(cx, cy);
                 field.Set(x, y, nextOutput);
-                continue;
-            }
-
-            if (airSlotsHead > 0)
+            } else if (airSlotsHead > 0)
             {
-                var (x, y) = airSlots[--airSlotsHead];
+                var (x, y) = airSlots[--airSlotsHead].ShiftFrom(cx, cy);
                 field.Set(x, y, nextOutput);
             }
         }
@@ -379,26 +454,26 @@ public static class DisplacementSystem
             return;
         }
 
-        List<(int, int, Reaction)> listCollected = new(ReactionOpportunities.Count);
-        while (ReactionOpportunities.TryTake(out (int, int, Reaction) triplet))
+        List<(int, int)> listCollected = new(ReactionOpportunities.Count);
+        while (ReactionOpportunities.TryTake(out (int, int) pair))
         {
-            listCollected.Add(triplet);
+            listCollected.Add(pair);
         }
 
         listCollected.Sort((p1, p2) =>
         {
-            var (x1, y1, _) = p1;
-            var (x2, y2, _) = p2;
+            var (x1, y1) = p1;
+            var (x2, y2) = p2;
 
             return (x1, y1).CompareTo((x2, y2));
         });
 
-        Span<(int, int, Reaction)> collected = listCollected.ToArray();
+        Span<(int, int)> collected = listCollected.ToArray();
         collected.Shuffle(state.Tick);
 
-        foreach ((var x, var y, Reaction reaction) in collected)
+        foreach (var (x, y) in collected)
         {
-            PerformReaction(x, y, state.Field, state.Tick, reaction);
+            InduceReactionAt(x, y, state.Field, state.Tick);
         }
     }
 }
@@ -422,7 +497,7 @@ public static class BaseMaterialPatches
             CodeMatch.IsLdarg(0),
             CodeMatch.LoadsField(AccessTools.Field(typeof(BaseMaterial), nameof(BaseMaterial.Reactions))),
             Dup,
-            CodeMatch.Branches()
+            CodeMatch.Branches(),
         ];
 
         CodeMatch[] postReactionIL =
@@ -432,7 +507,7 @@ public static class BaseMaterialPatches
             And,
             Ldc_I4_0,
             Ceq,
-            CodeMatch.IsStloc()
+            CodeMatch.IsStloc(),
         ];
 
         CodeMatch[] injectedCodeIL =
@@ -448,10 +523,9 @@ public static class BaseMaterialPatches
             Brfalse_S[onFail],
             Ldarg_1,
             Ldarg_2,
-            Ldloc_S[reaction.LocalIndex],
             Call[AccessTools.Method(typeof(DisplacementSystem), nameof(DisplacementSystem.RecordReactionOpportunity))],
             Ldc_I4_1,
-            Ret
+            Ret,
         ];
 
         matcher
