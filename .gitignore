@@ -2,8 +2,9 @@ bin/
 dev/
 obj/
 .idea/
-AtomCraft-Displacement.zip
-AtomCraft-Displacement.dll
+DeltaEpsilon.Displacement/
+DeltaEpsilon.Displacement.zip
+*.DotSettings.user
 /packages/
 riderModule.iml
 /_ReSharper.Caches/

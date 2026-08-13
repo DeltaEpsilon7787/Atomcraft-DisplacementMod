@@ -1,17 +1,19 @@
 using System.Collections.Concurrent;
+using System.Reflection;
+using System.Reflection.Emit;
 using Atomcraft;
 using Godot;
 using HarmonyLib;
+using static HarmonyLib.Code;
+using Label = System.Reflection.Emit.Label;
 
-namespace AtomCraft_Displacement;
+namespace DeltaEpsilon.Displacement;
 
-class DisplacementSystem
+public static class DisplacementSystem
 {
-    static SimField? _field;
-    static int _tick;
     static readonly ConcurrentBag<(int, int, Reaction)> ReactionOpportunities = [];
     const uint MaxDisplacementLength = 256;
-    
+
     static readonly Dictionary<(int, int), (int, int)> LeftRemapping = new(8)
     {
         { (-1, -1), (-1, 0) },
@@ -34,11 +36,15 @@ class DisplacementSystem
         { (0, 1), (-1, 1) },
         { (-1, 1), (-1, 0) },
         { (-1, 0), (-1, -1) },
-    };    
+    };
 
     [ThreadStatic] static byte[]? _pixelCounter;
 
-    static Reaction? TryFindReaction(BaseMaterial mat, int cx, int cy, SimField field, int tick) {
+    public static void RecordReactionOpportunity(int x, int y, Reaction reaction) {
+        ReactionOpportunities.Add((x, y, reaction));
+    }
+
+    public static Reaction? TryFindReaction(BaseMaterial mat, int cx, int cy, SimField field, int tick) {
         if (mat.Reactions == null || mat.Reactions.Length == 0)
         {
             return null;
@@ -115,21 +121,6 @@ class DisplacementSystem
         return result;
     }
 
-    static bool OurIsReactionValid(BaseMaterial that, int posX, int posY, SimField field, int tick) {
-        // We do our own instead 
-        Reaction? foundReaction = TryFindReaction(that, posX, posY, field, tick);
-
-        if (foundReaction != null)
-        {
-            ReactionOpportunities.Add((posX, posY, foundReaction));
-        }
-
-        return foundReaction != null;
-    }
-
-    static void OurDoReaction(BaseMaterial that, int posX, int posY, SimField field, int tick, Reaction reaction) { }
-
-    
     static List<(int, int)[]>? TryFindDisplacements(
         int x, int y,
         Span<(int, int)> displacementPositions,
@@ -189,42 +180,32 @@ class DisplacementSystem
             onSuccess: ;
         }
 
-        foreach ((int, int)[] path in paths)
-        {
-            foreach (var (px, py) in path)
-            {
-                var matId = field.Get(px, py);
-                Color color = matId != -1 ? matId.ToMaterial().Color : Colors.White;
-                GridFX.AddParticle(new Vector2I(px, py), Vector2.Zero, Vector2.Zero, color, 1);
-            }
-        }
-
         return paths;
     }
 
-    static void PerformReaction(int cx, int cy, Reaction reaction) {
-        if (_field == null)
+    static void PerformReaction(int cx, int cy, SimField? field, int tick, Reaction reaction) {
+        if (field == null)
         {
             return;
         }
-        
-        var primaryMat = _field.Get(cx + 0, cy + 0);
-        Reaction? reactionTest = TryFindReaction(primaryMat.ToMaterial(), cx, cy, _field, _tick);
+
+        var primaryMat = field.Get(cx + 0, cy + 0);
+        Reaction? reactionTest = TryFindReaction(primaryMat.ToMaterial(), cx, cy, field, tick);
         if (reactionTest != reaction)
         {
             // Revalidation of the reaction failed
             return;
         }
 
-        var m0 = _field.Get(cx - 1, cy - 1);
-        var m1 = _field.Get(cx - 1, cy + 0);
-        var m2 = _field.Get(cx - 1, cy + 1);
-        var m3 = _field.Get(cx + 0, cy - 1);
-        var m4 = _field.Get(cx + 0, cy + 0);
-        var m5 = _field.Get(cx + 0, cy + 1);
-        var m6 = _field.Get(cx + 1, cy - 1);
-        var m7 = _field.Get(cx + 1, cy + 0);
-        var m8 = _field.Get(cx + 1, cy + 1);
+        var m0 = field.Get(cx - 1, cy - 1);
+        var m1 = field.Get(cx - 1, cy + 0);
+        var m2 = field.Get(cx - 1, cy + 1);
+        var m3 = field.Get(cx + 0, cy - 1);
+        var m4 = field.Get(cx + 0, cy + 0);
+        var m5 = field.Get(cx + 0, cy + 1);
+        var m6 = field.Get(cx + 1, cy - 1);
+        var m7 = field.Get(cx + 1, cy + 0);
+        var m8 = field.Get(cx + 1, cy + 1);
 
         var is1 = Materials.IsStatic(m1);
         var is3 = Materials.IsStatic(m3);
@@ -265,8 +246,8 @@ class DisplacementSystem
         ];
 
         // We exploit Shuffle's property that for same length vectors and tick, the reordering will be the same 
-        matIds.Shuffle(_tick);
-        neighbors.Shuffle(_tick);
+        matIds.Shuffle(tick);
+        neighbors.Shuffle(tick);
 
         Span<(int, int)> inputSlots = stackalloc (int, int)[9];
         var inputSlotsHead = 0;
@@ -299,7 +280,7 @@ class DisplacementSystem
                     {
                         if (matId != catalystIdsAmts[j].Item1 || catalystIdsAmts[j].Item2 <= 0) continue;
                         catalystIdsAmts[j].Item2--;
-                        goto onFound;
+                        break;
                     }
 
                     if (Materials.IsStatic(matId))
@@ -318,8 +299,6 @@ class DisplacementSystem
         var extraAirNeeded = (reaction.OutputCellCount - reaction.InputCellCount) - airSlotsHead;
         if (displacementSlotsHead < extraAirNeeded)
         {
-            // Should not happen
-            GD.PrintErr("Fewer displacement locations are available than air slots requested");
             return;
         }
 
@@ -330,7 +309,7 @@ class DisplacementSystem
             List<(int, int)[]>? displacementPaths = null;
             for (var i = 0; i < Math.Clamp(reaction.Probability, 1, 100); i++)
             {
-                displacementPaths = TryFindDisplacements(cx, cy, displacementTargets, _field, _tick);
+                displacementPaths = TryFindDisplacements(cx, cy, displacementTargets, field, tick);
                 if (displacementPaths != null)
                 {
                     break;
@@ -349,9 +328,9 @@ class DisplacementSystem
                 {
                     var ((ax, ay), (bx, by)) = (path[i], path[i - 1]);
 
-                    var i1 = _field.Index(ax, ay);
-                    var i2 = _field.Index(bx, by);
-                    _field.SwapMaterialAndHeat(i1, i2);
+                    var i1 = field.Index(ax, ay);
+                    var i2 = field.Index(bx, by);
+                    field.SwapMaterialAndHeat(i1, i2);
                 }
             }
 
@@ -364,7 +343,6 @@ class DisplacementSystem
 
         if (airSlotsHead + inputSlotsHead < reaction.OutputCellCount)
         {
-            GD.PrintErr("STILL not enough space");
             return;
         }
 
@@ -374,28 +352,28 @@ class DisplacementSystem
             if (inputSlotsHead > 0)
             {
                 var (x, y) = inputSlots[--inputSlotsHead];
-                _field.Set(x, y, nextOutput);
+                field.Set(x, y, nextOutput);
                 continue;
             }
 
             if (airSlotsHead > 0)
             {
                 var (x, y) = airSlots[--airSlotsHead];
-                _field.Set(x, y, nextOutput);
+                field.Set(x, y, nextOutput);
             }
         }
 
-        var cIndx = _field.Index(cx, cy);
-        var tempHere = _field.GetHeatmap(cIndx);
+        var cIndx = field.Index(cx, cy);
+        var tempHere = field.GetHeatmap(cIndx);
 
         if (reaction.ChangeInTemperature.HasValue)
         {
             var newTemp = (short)(reaction.ChangeInTemperature.Value + tempHere);
-            _field.SetHeatmap(cIndx, newTemp);
+            field.SetHeatmap(cIndx, newTemp);
         }
     }
 
-    static void PerformReactions() {
+    public static void PerformReactions(SimSnapshot state) {
         if (ReactionOpportunities.IsEmpty)
         {
             return;
@@ -416,51 +394,98 @@ class DisplacementSystem
         });
 
         Span<(int, int, Reaction)> collected = listCollected.ToArray();
-        collected.Shuffle(_tick);
+        collected.Shuffle(state.Tick);
 
         foreach ((var x, var y, Reaction reaction) in collected)
         {
-            PerformReaction(x, y, reaction);
+            PerformReaction(x, y, state.Field, state.Tick, reaction);
         }
     }
+}
 
-    static void OurRefreshMaterialTypeIdentityCacheFromActiveChunks() {
-        PerformReactions();
-        RefreshMaterialTypeIdentityCacheFromActiveChunks();
-    }
-
-    [HarmonyReversePatch]
-    [HarmonyPatch(typeof(Simulation), "RefreshMaterialTypeIdentityCacheFromActiveChunks")]
-    static void RefreshMaterialTypeIdentityCacheFromActiveChunks() {
-        throw new Exception("Stub");
-    }
-
-    [HarmonyPatch(typeof(Simulation), nameof(Simulation.Step))]
-    [HarmonyPrefix]
-    static bool _0(SimSnapshot state) {
-        _field = state.Field;
-        _tick = state.Tick;
-        return true;
-    }
-
-    [HarmonyPatch(typeof(Simulation), nameof(Simulation.Step))]
+[HarmonyPatch(typeof(BaseMaterial))]
+public static class BaseMaterialPatches
+{
     [HarmonyTranspiler]
-    IEnumerable<CodeInstruction> _1(IEnumerable<CodeInstruction> instructions) {
-        return instructions.MethodReplacer(
-            AccessTools.Method(typeof(Simulation), "RefreshMaterialTypeIdentityCacheFromActiveChunks"),
-            AccessTools.Method(typeof(DisplacementSystem), nameof(OurRefreshMaterialTypeIdentityCacheFromActiveChunks))
-        );
-    }
+    [HarmonyPatch(nameof(BaseMaterial.Step))]
+    static IEnumerable<CodeInstruction> _0(IEnumerable<CodeInstruction> instructions, ILGenerator generator) {
+        GD.Print("Patching IL of BaseMaterial.Step");
 
-    [HarmonyPatch(typeof(BaseMaterial), nameof(BaseMaterial.Step))]
+        CodeMatcher matcher = new(instructions, generator);
+
+        matcher
+            .DeclareLocal(typeof(Reaction), out LocalBuilder? reaction)
+            .DefineLabel(out Label onFail);
+
+        CodeMatch[] reactionSetIL =
+        [
+            CodeMatch.IsLdarg(0),
+            CodeMatch.LoadsField(AccessTools.Field(typeof(BaseMaterial), nameof(BaseMaterial.Reactions))),
+            Dup,
+            CodeMatch.Branches()
+        ];
+
+        CodeMatch[] postReactionIL =
+        [
+            CodeMatch.IsLdarg(),
+            Ldc_I4_4,
+            And,
+            Ldc_I4_0,
+            Ceq,
+            CodeMatch.IsStloc()
+        ];
+
+        CodeMatch[] injectedCodeIL =
+        [
+            Ldarg_0,
+            Ldarg_1,
+            Ldarg_2,
+            Ldarg_3,
+            Ldarg_S[4],
+            Call[AccessTools.Method(typeof(DisplacementSystem), nameof(DisplacementSystem.TryFindReaction))],
+            Stloc_S[reaction.LocalIndex],
+            Ldloc_S[reaction.LocalIndex],
+            Brfalse_S[onFail],
+            Ldarg_1,
+            Ldarg_2,
+            Ldloc_S[reaction.LocalIndex],
+            Call[AccessTools.Method(typeof(DisplacementSystem), nameof(DisplacementSystem.RecordReactionOpportunity))],
+            Ldc_I4_1,
+            Ret
+        ];
+
+        matcher
+            .MatchStartForward(reactionSetIL)
+            .Insert(injectedCodeIL)
+            .Do(cm => cm.Instruction.MoveLabelsFrom(cm.Clone().MatchStartForward(reactionSetIL).Instruction))
+            .MatchStartForward(postReactionIL)
+            .AddLabels([onFail])
+            .Advance(-1)
+            .RemoveUntilBackward(injectedCodeIL);
+
+        return matcher.Instructions();
+    }
+}
+
+[HarmonyPatch(typeof(Simulation))]
+public static class SimulationPatches
+{
     [HarmonyTranspiler]
-    IEnumerable<CodeInstruction> _2(IEnumerable<CodeInstruction> instructions) {
-        return instructions
-            .MethodReplacer(
-                AccessTools.Method(typeof(BaseMaterial), "IsReactionValid"),
-                AccessTools.Method(typeof(DisplacementSystem), nameof(DisplacementSystem.OurIsReactionValid)))
-            .MethodReplacer(
-                AccessTools.Method(typeof(BaseMaterial), "DoReaction"),
-                AccessTools.Method(typeof(DisplacementSystem), nameof(DisplacementSystem.OurDoReaction)));
+    [HarmonyPatch(nameof(Simulation.Step))]
+    static IEnumerable<CodeInstruction> _1(IEnumerable<CodeInstruction> instructions) {
+        GD.Print("Patching IL of Simulation.Step");
+
+        MethodInfo? targetMethod = AccessTools.Method(typeof(Simulation), "RefreshMaterialTypeIdentityCacheFromActiveChunks");
+        var matcher = new CodeMatcher(instructions);
+
+        matcher
+            .MatchStartForward(CodeMatch.Calls(targetMethod))
+            .ThrowIfInvalid("Could not find RefreshMaterial...")
+            .Insert(
+                Ldarg_0,
+                Call[AccessTools.Method(typeof(DisplacementSystem), nameof(DisplacementSystem.PerformReactions))]
+            );
+
+        return matcher.Instructions();
     }
 }

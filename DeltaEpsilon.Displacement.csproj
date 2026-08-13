@@ -2,9 +2,11 @@
 
     <PropertyGroup>
         <TargetFramework>net8.0</TargetFramework>
-        <RootNamespace>AtomCraft_Displacement</RootNamespace>
+        <RootNamespace>DeltaEpsilon.Displacement</RootNamespace>
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
+        <AssemblyName>DeltaEpsilon.Displacement</AssemblyName>
+        <RunPostBuildEvent>Always</RunPostBuildEvent>
     </PropertyGroup>
 
     <ItemGroup>
@@ -20,7 +22,7 @@
     </ItemGroup>
 
     <Target Name="PostBuild" AfterTargets="PostBuildEvent">
-      <Exec Command="cp ./bin/Release/net8.0/AtomCraft-Displacement.dll .&#xA;zip AtomCraft-Displacement.zip AtomCraft-Displacement.dll mod.json" />
+      <Exec Command="mkdir -p ./DeltaEpsilon.Displacement&#xA;cp ./bin/Release/net8.0/DeltaEpsilon.Displacement.dll ./DeltaEpsilon.Displacement/&#xA;cp ./mod.json ./DeltaEpsilon.Displacement/&#xA;zip -m DeltaEpsilon.Displacement.zip DeltaEpsilon.Displacement/*" />
     </Target>
 
 </Project>

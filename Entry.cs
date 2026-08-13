@@ -1,11 +1,13 @@
-﻿using HarmonyLib;
+﻿using Godot;
+using HarmonyLib;
 
-namespace AtomCraft_Displacement;
+namespace DeltaEpsilon.Displacement;
 
-class Entry
+public class Entry
 {
-    static void Initialize() {
+    public static void Initialize() {
         var harmony = new Harmony("DeltaEpsilon.displacement");
         harmony.PatchAll();
+        GD.Print("Displacement mod loaded");
     }
 }

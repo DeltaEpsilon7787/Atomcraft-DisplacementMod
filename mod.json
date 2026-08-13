@@ -7,8 +7,8 @@
   "dllModules": [
     {
       "moduleId": "DeltaEpsilon.Displacement",
-      "dll": "AtomCraft-Displacement.dll",
-      "initClass": "AtomCraft_Displacement.Entry",
+      "dll": "DeltaEpsilon.Displacement.dll",
+      "initClass": "DeltaEpsilon.Displacement.Entry",
       "dependencies": [ "0Harmony/Wrapper" ],
       "optionalDependencies": [ ]
     }

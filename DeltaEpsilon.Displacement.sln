@@ -1,6 +1,6 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AtomCraft-Displacement", "AtomCraft-Displacement.csproj", "{1B5A2793-8666-4DA0-90AE-23F58FCBF1FF}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DeltaEpsilon.Displacement", "DeltaEpsilon.Displacement.csproj", "{1B5A2793-8666-4DA0-90AE-23F58FCBF1FF}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
