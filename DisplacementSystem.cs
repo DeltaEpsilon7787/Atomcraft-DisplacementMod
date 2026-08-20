@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Reflection;
 using System.Reflection.Emit;
+using System.Runtime.CompilerServices;
 using Atomcraft;
 using Godot;
 using HarmonyLib;
@@ -12,7 +13,9 @@ namespace DeltaEpsilon.Displacement;
 public static class DisplacementSystem
 {
     static readonly ConcurrentBag<(int, int)> ReactionOpportunities = [];
-    const uint MaxDisplacementLength = 256;
+    
+    // 1024 indirectly limits max length of effect to ~45 pixels
+    const uint MaxDisplacementWeight = 1024;
 
     // 0 1 2   ↖ ↑ ↗
     // 3 4 5   ← X →
@@ -58,10 +61,6 @@ public static class DisplacementSystem
         return field.Get(coords.Item1, coords.Item2);
     }
 
-    static short Get(this SimField field, (int, int) coords) {
-        return field.Get(coords.Item1, coords.Item2);
-    }
-
     static byte DirectionLeftRotate(this byte dirIndx) {
         return dirIndx switch
         {
@@ -100,6 +99,26 @@ public static class DisplacementSystem
         ReactionOpportunities.Add((x, y));
     }
 
+    static void MakeMatArray(SimField field, int cx, int cy, Span<short> outMatArray) {
+        // 0 1 2   ↖ ↑ ↗
+        // 3 4 5   ← X →
+        // 6 7 8   ↙ ↓ ↘
+        for (byte dir = 0; dir < 9; dir++)
+        {
+            outMatArray[dir] = dir.ShiftFrom(cx, cy).GetAt(field);
+        }
+
+        var is1 = Materials.IsStatic(outMatArray[1]);
+        var is3 = Materials.IsStatic(outMatArray[3]);
+        var is5 = Materials.IsStatic(outMatArray[5]);
+        var is7 = Materials.IsStatic(outMatArray[7]);
+
+        if (is1 && is3) outMatArray[0] = -2;
+        if (is1 && is5) outMatArray[2] = -2;
+        if (is3 && is7) outMatArray[6] = -2;
+        if (is5 && is7) outMatArray[8] = -2;
+    }
+    
     public static Reaction? TryFindReaction(BaseMaterial that, int cx, int cy, SimField field, int tick) {
         if (that.Reactions == null || that.Reactions.Length == 0)
         {
@@ -108,24 +127,8 @@ public static class DisplacementSystem
 
         _pixelCounter ??= new byte[short.MaxValue + 1];
 
-        // 0 1 2   ↖ ↑ ↗
-        // 3 4 5   ← X →
-        // 6 7 8   ↙ ↓ ↘
         Span<short> matArray = stackalloc short[9];
-        for (byte dir = 0; dir < 9; dir++)
-        {
-            matArray[dir] = dir.ShiftFrom(cx, cy).GetAt(field);
-        }
-
-        var is1 = Materials.IsStatic(matArray[1]);
-        var is3 = Materials.IsStatic(matArray[3]);
-        var is5 = Materials.IsStatic(matArray[5]);
-        var is7 = Materials.IsStatic(matArray[7]);
-
-        if (is1 && is3) matArray[0] = -2;
-        if (is1 && is5) matArray[2] = -2;
-        if (is3 && is7) matArray[6] = -2;
-        if (is5 && is7) matArray[8] = -2;
+        MakeMatArray(field, cx, cy, matArray);
 
         foreach (var mat in matArray)
         {
@@ -156,7 +159,6 @@ public static class DisplacementSystem
             );
             if (!isValid) continue;
 
-            // Can also be made `yield return` if we want to support multiple reactions
             result = reaction;
             break;
         }
@@ -175,20 +177,19 @@ public static class DisplacementSystem
         SimField field, int tick
     ) {
         List<(int, int)[]> paths = new(displacementStarts.Length);
-
-        Span<(int, int)> path = stackalloc (int, int)[(int)MaxDisplacementLength];
+        Span<(int, int)> path = stackalloc (int, int)[(int)MaxDisplacementWeight];
 
         foreach (var dir in displacementStarts)
         {
             var (fx, fy) = dir.ShiftFrom(x, y);
-
             var (cx, cy) = (fx, fy);
             var heading = dir;
 
+            var totalDisplacedWeight = 1;
             var pathHead = 0;
             path[pathHead++] = (cx, cy);
 
-            var r = 4;
+            var r = 6;
 
             headingLoop:
             var isDiagonalShift = heading switch
@@ -221,7 +222,8 @@ public static class DisplacementSystem
             }
 
             (cx, cy) = heading.ShiftFrom(cx, cy);
-            if (Math.Max(Math.Abs(cx - x), Math.Abs(cy - y)) <= 1)
+            var dist = Math.Max(Math.Abs(cx - x), Math.Abs(cy - y)); 
+            if (dist <= 1)
             {
                 // Displacement failed, we've intersected with protected area.
                 return null;
@@ -231,10 +233,14 @@ public static class DisplacementSystem
 
             // Hit a wall
             if (Materials.IsStatic(matId)) return null;
+            // OoB access
             if (matId == -2) return null;
 
             path[pathHead++] = (cx, cy);
-            if (pathHead >= MaxDisplacementLength)
+            
+            // This essentially allows us to displace more material closer to the reaction center
+            totalDisplacedWeight += dist;
+            if (totalDisplacedWeight >= MaxDisplacementWeight)
             {
                 return null;
             }
@@ -279,24 +285,8 @@ public static class DisplacementSystem
             return;
         }
 
-        // 0 1 2   ↖ ↑ ↗
-        // 3 4 5   ← X →
-        // 6 7 8   ↙ ↓ ↘
         Span<short> matArray = stackalloc short[9];
-        for (byte dir = 0; dir < 9; dir++)
-        {
-            matArray[dir] = dir.ShiftFrom(cx, cy).GetAt(field);
-        }
-
-        var is1 = Materials.IsStatic(matArray[1]);
-        var is3 = Materials.IsStatic(matArray[3]);
-        var is5 = Materials.IsStatic(matArray[5]);
-        var is7 = Materials.IsStatic(matArray[7]);
-
-        if (is1 && is3) matArray[0] = -2;
-        if (is1 && is5) matArray[2] = -2;
-        if (is3 && is7) matArray[6] = -2;
-        if (is5 && is7) matArray[8] = -2;
+        MakeMatArray(field, cx, cy, matArray);
 
         Span<(short type, int amt)> inputIdsAmts =
         [
@@ -305,6 +295,7 @@ public static class DisplacementSystem
             reaction.InputTypeCount > 2 ? (reaction.InputTypes[2], reaction.InputAmounts[2]) : ((short)0, 0),
             reaction.InputTypeCount > 3 ? (reaction.InputTypes[3], reaction.InputAmounts[3]) : ((short)0, 0),
         ];
+        
         Span<(short type, int amt)> catalystIdsAmts =
         [
             reaction.CatalystTypeCount > 0 ? (reaction.CatalystTypes[0], reaction.CatalystAmounts[0]) : ((short)0, 0),
@@ -312,7 +303,7 @@ public static class DisplacementSystem
         ];
 
         // Indx 4 has special meaning since it is the central pixel
-        //   so if always must be consumed first
+        //   so it always must be consumed first
         Span<byte> directionOrdering =
         [
             0, 1, 2,
@@ -358,9 +349,10 @@ public static class DisplacementSystem
                     {
                         if (matId != catalystIdsAmts[j].type || catalystIdsAmts[j].amt <= 0) continue;
                         catalystIdsAmts[j].amt--;
+                        // We allow catalysts to be potentially displaced out of the reaction, so no goto here
                         break;
                     }
-
+                    
                     if (Materials.IsStatic(matId))
                     {
                         continue;

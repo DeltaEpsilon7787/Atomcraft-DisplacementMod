@@ -9,7 +9,7 @@
       "moduleId": "DeltaEpsilon.Displacement",
       "dll": "DeltaEpsilon.Displacement.dll",
       "initClass": "DeltaEpsilon.Displacement.Entry",
-      "dependencies": [ "0Harmony/Wrapper" ],
+      "dependencies": [ ],
       "optionalDependencies": [ ]
     }
   ]
