@@ -119,8 +119,8 @@ public static class DisplacementSystem
         if (is5 && is7) outMatArray[8] = -2;
     }
     
-    public static Reaction? TryFindReaction(BaseMaterial that, int cx, int cy, SimField field, int tick) {
-        if (that.Reactions == null || that.Reactions.Length == 0)
+    public static Reaction? TryFindReaction(BaseMaterial? that, int cx, int cy, SimField field, int tick) {
+        if (that == null || that.Reactions == null || that.Reactions.Length == 0)
         {
             return null;
         }

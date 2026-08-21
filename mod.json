@@ -3,7 +3,7 @@
   "name": "Reaction Displacement",
   "description": "Reactions will try to displace pixels to make space for products that would not fit.",
   "author": "DeltaEpsilon",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "dllModules": [
     {
       "moduleId": "DeltaEpsilon.Displacement",
